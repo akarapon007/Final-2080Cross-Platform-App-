@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"go-gorm/model"
 	"io/ioutil"
 	"log"
 	"strconv"
@@ -17,39 +18,6 @@ import (
 var DB *gorm.DB
 
 // โมเดล
-type User struct {
-	ID       uint   `json:"id" gorm:"primaryKey"`
-	Email    string `json:"email" gorm:"unique"`
-	Password string `json:"-"`
-	Name     string `json:"name"`
-	Address  string `json:"address"`
-}
-
-type Product struct {
-	ID          uint    `json:"id" gorm:"primaryKey"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price"`
-}
-
-type Cart struct {
-	ID         uint       `json:"id" gorm:"primaryKey"`
-	Name       string     `json:"name"`
-	CustomerID uint       `json:"customer_id"`
-	Items      []CartItem `json:"items"`
-}
-
-type CartItem struct {
-	ID        uint    `json:"id" gorm:"primaryKey"`
-	CartID    uint    `json:"cart_id"`
-	ProductID uint    `json:"product_id"`
-	Quantity  int     `json:"quantity"`
-	Product   Product `json:"product" gorm:"foreignKey:ProductID"`
-}
-
-func (u *User) CheckPassword(password string) bool {
-	return u.Password == password
-}
 
 type Config struct {
 	MySQL struct {
@@ -100,7 +68,7 @@ func ConnectDatabase() {
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	DB = database
-	DB.AutoMigrate(&User{}, &Product{}, &Cart{}, &CartItem{})
+	DB.AutoMigrate(&model.User{}, &model.Product{}, &model.Cart{}, &model.CartItem{})
 }
 
 // API Handlers
@@ -114,7 +82,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	var user User
+	var user model.User
 	if err := DB.Where("email = ?", loginData.Email).First(&user).Error; err != nil {
 		c.JSON(401, gin.H{"error": "Invalid credentials"})
 		return
@@ -134,7 +102,7 @@ func Login(c *gin.Context) {
 
 func GetUserProfile(c *gin.Context) {
 	userID := uint(1) // สมมติว่าได้จาก middleware
-	var user User
+	var user model.User
 	if err := DB.First(&user, userID).Error; err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
@@ -157,7 +125,7 @@ func UpdateAddress(c *gin.Context) {
 		return
 	}
 
-	if err := DB.Model(&User{}).Where("id = ?", userID).Update("address", updateData.Address).Error; err != nil {
+	if err := DB.Model(&model.User{}).Where("id = ?", userID).Update("address", updateData.Address).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update address"})
 		return
 	}
@@ -183,7 +151,7 @@ func ChangePassword(c *gin.Context) {
 		return
 	}
 
-	var user User
+	var user model.User
 	if err := DB.First(&user, userID).Error; err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
@@ -207,7 +175,7 @@ func SearchProducts(c *gin.Context) {
 	minPrice := c.Query("min_price")
 	maxPrice := c.Query("max_price")
 
-	query := DB.Model(&Product{})
+	query := DB.Model(&model.Product{})
 	if description != "" {
 		query = query.Where("description LIKE ?", "%"+description+"%")
 	}
@@ -218,7 +186,7 @@ func SearchProducts(c *gin.Context) {
 		query = query.Where("price <= ?", maxPrice)
 	}
 
-	var products []Product
+	var products []model.Product
 	if err := query.Find(&products).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to search products"})
 		return
@@ -239,16 +207,16 @@ func AddToCart(c *gin.Context) {
 		return
 	}
 
-	var cart Cart
+	var cart model.Cart
 	if err := DB.Where("name = ? AND customer_id = ?", cartName, userID).First(&cart).Error; err != nil {
-		cart = Cart{Name: cartName, CustomerID: userID}
+		cart = model.Cart{Name: cartName, CustomerID: userID}
 		if err := DB.Create(&cart).Error; err != nil {
 			c.JSON(500, gin.H{"error": "Failed to create cart"})
 			return
 		}
 	}
 
-	var cartItem CartItem
+	var cartItem model.CartItem
 	if err := DB.Where("cart_id = ? AND product_id = ?", cart.ID, itemData.ProductID).First(&cartItem).Error; err == nil {
 		cartItem.Quantity += itemData.Quantity
 		if err := DB.Save(&cartItem).Error; err != nil {
@@ -256,7 +224,7 @@ func AddToCart(c *gin.Context) {
 			return
 		}
 	} else {
-		cartItem = CartItem{CartID: cart.ID, ProductID: itemData.ProductID, Quantity: itemData.Quantity}
+		cartItem = model.CartItem{CartID: cart.ID, ProductID: itemData.ProductID, Quantity: itemData.Quantity}
 		if err := DB.Create(&cartItem).Error; err != nil {
 			c.JSON(500, gin.H{"error": "Failed to add cart item"})
 			return
@@ -273,7 +241,7 @@ func GetCarts(c *gin.Context) {
 		return
 	}
 
-	var carts []Cart
+	var carts []model.Cart
 	if err := DB.Preload("Items.Product").Where("customer_id = ?", customerID).Find(&carts).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to get carts"})
 		return
