@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
+
+	"gopkg.in/yaml.v3"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -44,27 +47,58 @@ type CartItem struct {
 	Product   Product `json:"product" gorm:"foreignKey:ProductID"`
 }
 
-func (u *User) BeforeCreate(tx *gorm.DB) error {
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	u.Password = string(hashedPassword)
-	return nil
+func (u *User) CheckPassword(password string) bool {
+	return u.Password == password
 }
 
-func (u *User) CheckPassword(password string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password))
-	return err == nil
+type Config struct {
+	MySQL struct {
+		DSN string `yaml:"dsn"`
+	} `yaml:"mysql"`
+}
+
+// เชื่อมต่อฐานข้อมูล
+func LoadConfig() (string, error) {
+	var config Config
+	data, err := ioutil.ReadFile("config.yaml")
+	if err != nil {
+		return "", fmt.Errorf("failed to read config file: %v", err)
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return "", fmt.Errorf("failed to unmarshal config: %v", err)
+	}
+	return config.MySQL.DSN, nil
 }
 
 // เชื่อมต่อฐานข้อมูล
 func ConnectDatabase() {
-	dsn := "cp_65011212080:65011212080@csmsu@tcp(202.28.34.197:3306)/cp_65011212080?charset=utf8mb4&parseTime=True&loc=Local"
-	database, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	dsn, err := LoadConfig()
 	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
+		log.Fatal(err)
 	}
+
+	var database *gorm.DB
+	for i := 0; i < 3; i++ { // ลองเชื่อมต่อ 3 ครั้ง
+		database, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+		if err == nil {
+			break
+		}
+		log.Printf("Failed to connect to database (attempt %d): %v", i+1, err)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		log.Fatal("Failed to connect to database after retries:", err)
+	}
+
+	// ตั้งค่า connection pool
+	sqlDB, err := database.DB()
+	if err != nil {
+		log.Fatal("Failed to get sql.DB:", err)
+	}
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
 	DB = database
 	DB.AutoMigrate(&User{}, &Product{}, &Cart{}, &CartItem{})
 }
@@ -188,13 +222,8 @@ func ChangePassword(c *gin.Context) {
 		return
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(passwordData.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to hash password"})
-		return
-	}
-
-	if err := DB.Model(&user).Update("password", string(hashedPassword)).Error; err != nil {
+	// อัปเดตรหัสผ่านแบบ plaintext
+	if err := DB.Model(&user).Update("password", passwordData.NewPassword).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update password"})
 		return
 	}
@@ -287,7 +316,7 @@ func main() {
 	SeedData()
 
 	r := gin.Default()
-	r.POST("/auth/login", Login)
+	r.POST("/login", Login)
 	r.GET("/users/me", GetUserProfile)
 	r.PUT("/users/me/address", UpdateAddress)
 	r.PUT("/users/me/password", ChangePassword)
