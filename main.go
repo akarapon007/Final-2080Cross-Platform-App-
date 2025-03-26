@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -201,7 +202,16 @@ func UpdateAddress(c *gin.Context) {
 }
 
 func ChangePassword(c *gin.Context) {
-	userID := uint(1) // สมมติว่าได้จาก middleware
+	// ดึง id จากพารามิเตอร์ใน URL
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "Invalid user ID"})
+		return
+	}
+	userID := uint(id) // แปลงเป็น uint
+
+	// รับข้อมูล JSON (old_password และ new_password)
 	var passwordData struct {
 		OldPassword string `json:"old_password"`
 		NewPassword string `json:"new_password"`
@@ -211,23 +221,26 @@ func ChangePassword(c *gin.Context) {
 		return
 	}
 
-	var user User
+	// ค้นหาผู้ใช้จากฐานข้อมูล (สมมติว่าใช้ GORM)
+	var user User // User เป็น struct ที่กำหนดไว้
 	if err := DB.First(&user, userID).Error; err != nil {
 		c.JSON(404, gin.H{"error": "User not found"})
 		return
 	}
 
+	// ตรวจสอบรหัสผ่านเก่า (สมมติว่ามีเมธอด CheckPassword)
 	if !user.CheckPassword(passwordData.OldPassword) {
 		c.JSON(401, gin.H{"error": "Incorrect old password"})
 		return
 	}
 
-	// อัปเดตรหัสผ่านแบบ plaintext
+	// อัปเดตรหัสผ่านใหม่ (สมมติว่ารหัสผ่านเก็บแบบ plaintext)
 	if err := DB.Model(&user).Update("password", passwordData.NewPassword).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to update password"})
 		return
 	}
 
+	// ส่งการตอบกลับเมื่อสำเร็จ
 	c.JSON(200, gin.H{"message": "Password updated successfully"})
 }
 
@@ -319,7 +332,7 @@ func main() {
 	r.POST("/login", Login)
 	r.GET("/users/me", GetUserProfile)
 	r.PUT("/users/me/address", UpdateAddress)
-	r.PUT("/users/me/password", ChangePassword)
+	r.PUT("/users/:id/password", ChangePassword)
 	r.GET("/products", SearchProducts)
 	r.POST("/carts/:cart_name/items", AddToCart)
 	r.GET("/carts", GetCarts)
